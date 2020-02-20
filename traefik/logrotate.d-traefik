@@ -1,0 +1,11 @@
+/var/log/traefik/*.log {
+        daily
+        rotate 7
+        compress
+        delaycompress
+        missingok
+        notifempty
+        postrotate
+                kill -USR1 $(systemctl show -p MainPID traefik.service 2>/dev/null | cut -d= -f2)
+        endscript
+}
