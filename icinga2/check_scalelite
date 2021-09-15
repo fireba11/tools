@@ -1,0 +1,133 @@
+#!/bin/bash
+#
+# Check scalelite cluster health
+# Written by
+#
+# Usage: ./check_scalelite
+#
+# Description:
+#
+# Since the rake command via docker exec needs a lot of permissions, we do that in a cronjob for root and write to a tmp-file
+# the plugin then works with.
+#
+# Notes:
+#
+# needs a cronjob as root, should be in the interval you run the check:
+# */5 * * * * docker exec -t scalelite-api env COLUMNS=2048 bundle exec rake status > /tmp/scalelite.state
+#
+
+STATE_OK=0
+STATE_WARNING=1
+STATE_CRITICAL=2
+STATE_UNKNOWN=3
+STATE_DEPENDENT=4
+
+PROGNAME=$(basename "$0")
+REVISION="0.1"
+
+# defaults
+CHECKFILE="/tmp/scalelite.state"
+critical=1
+warning=2
+
+print_usage() {
+    echo "Usage: $PROGNAME --filename statefile -w <number> -c <number>"
+    echo "Usage: $PROGNAME --help"
+    echo "Usage: $PROGNAME --version"
+}
+
+print_help() {
+    print_revision "$PROGNAME" $REVISION
+    echo ""
+    print_usage
+    echo ""
+    echo "scalelite cluster check plugin for icinga2"
+    echo ""
+    support
+}
+
+# Grab the command line arguments
+
+#logfile=$1
+#oldlog=$2
+#query=$3
+exitstatus=$STATE_WARNING #default
+while test -n "$1"; do
+    case "$1" in
+        --help)
+            print_help
+            exit "$STATE_OK"
+            ;;
+        -h)
+            print_help
+            exit "$STATE_OK"
+            ;;
+        --version)
+            print_revision "$PROGNAME" $REVISION
+            exit "$STATE_OK"
+            ;;
+        -V)
+            print_revision "$PROGNAME" $REVISION
+            exit "$STATE_OK"
+            ;;
+        --filename)
+            CHECKFILE=$2
+            shift
+            ;;
+        -w)
+            warning=$2
+            shift
+            ;;
+        -c)
+            critical=$2
+            shift
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            print_usage
+            exit "$STATE_UNKNOWN"
+            ;;
+    esac
+    shift
+done
+
+# If the state file doesn't exist or is not readable, exit
+
+if [ ! -e "$CHECKFILE" ]; then
+    echo "scalelite check error: state file $CHECKFILE does not exist! Did you set up the cronjob?"
+    exit "$STATE_UNKNOWN"
+elif [ ! -r "$CHECKFILE" ] ; then
+    echo "scalelite check error: state file $CHECKFILE is not readable!"
+    exit "$STATE_UNKNOWN"
+fi
+
+# Count the number of nodes we have and handle errors when grep fails
+count=$(grep -c ".*" "$CHECKFILE" 2>&1)
+((count-=1))
+
+if [[ $? -gt 1 ]]; then
+    echo "scalelite check error: $count"
+    exit "$STATE_UNKNOWN"
+fi
+
+# Count the number of nodes we have that are enabled and online and handle errors when grep fails
+count_eo=$(grep -c "enabled.*online" "$CHECKFILE" 2>&1)
+if [[ $? -gt 1 ]]; then
+    echo "scalelite check error: $count"
+    exit "$STATE_UNKNOWN"
+fi
+
+if [ "$count_eo" -gt "$warning" ]; then
+    echo "check ok - $count_eo out of $count nodes are live"
+    exitstatus=$STATE_OK
+else
+    if [ "$count_eo" -gt "$critical" ]; then
+        echo "check warning - $count_eo out of $count nodes are live"
+        exitstatus=$STATE_WARNING
+    else
+        echo "check critical - $count_eo out of $count nodes are live"
+        exitstatus=$STATE_CRITICAL
+    fi
+fi
+
+exit "$exitstatus"
